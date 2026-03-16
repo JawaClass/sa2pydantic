@@ -13,9 +13,9 @@ class Pokemon(Base):
 
     trainer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("trainer.id"), nullable=True)
 
-    evolution_id: Mapped[Optional[int]] = mapped_column(ForeignKey("pokemon.id"))#, nullable=True)
+    evolution_id: Mapped[Optional[int]] = mapped_column(ForeignKey("pokemon.id"))
 
-    evolution: Mapped[Optional["Pokemon"]] = relationship() #foreign_keys=[evolution_id])
+    evolution: Mapped[Optional["Pokemon"]] = relationship() 
     owner: Mapped[Optional["Trainer"]] = relationship(back_populates="pokemons")
     items: Mapped[List[PokemonHasItem]] = relationship(back_populates="pokemon")
 ```
