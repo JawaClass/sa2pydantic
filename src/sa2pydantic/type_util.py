@@ -1,8 +1,10 @@
 from typing import get_args
 
+
 def is_optional(type_: type):
     args = get_args(type_)
     return type(None) in args
+
 
 def get_optional_inner(type_: type):
     assert is_optional(type_)

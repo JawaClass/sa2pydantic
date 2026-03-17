@@ -19,7 +19,7 @@ precommit:
 
 .PHONY: lint
 lint:
-	uv run -m ruff check .
+	uv run -m ruff format . && uv run -m ruff check . --fix
 
 .PHONY: all
 all: 

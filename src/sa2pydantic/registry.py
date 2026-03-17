@@ -1,15 +1,15 @@
-
 import threading
 from collections import defaultdict
 from typing import ForwardRef
+
 from .types import PY_MODEL, SA_MODEL
 
-RegistryType =  defaultdict[SA_MODEL, dict[str, PY_MODEL | ForwardRef]]
+RegistryType = defaultdict[SA_MODEL, dict[str, PY_MODEL | ForwardRef]]
 
 
 class Sa2PydanticReg(RegistryType):
     def __init__(self):
-        super().__init__(lambda: {})
+        super().__init__(dict)
         self.lock = threading.Lock()
 
     def __setitem__(self, key, value):

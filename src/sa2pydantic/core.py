@@ -1,14 +1,17 @@
-from typing import Any, Callable, ForwardRef, Literal, Optional, Set, cast, get_args
-from sqlalchemy import inspect, Column
-from sqlalchemy.orm import DeclarativeBase
-from pydantic import create_model, Field, BaseModel
+from collections.abc import Callable
+from typing import Any, ForwardRef, Optional, cast, get_args
+
+from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
-from sqlalchemy.orm import Relationship
+from sqlalchemy import Column, inspect
+from sqlalchemy.orm import DeclarativeBase, Relationship
+
 from .registry import SA2PYDANTIC_REGISTRY
-from .types import PY_MODEL, SA_MODEL
-from .type_util import is_optional 
+from .type_util import is_optional
+from .types import PY_MODEL, SA_MODEL, LeadingUnderscoreStrategy
 
 _SENTIANL_NONE = object()
+
 
 def get_default(param: Any):
     if param is None:
@@ -17,23 +20,23 @@ def get_default(param: Any):
         arg = param.arg
         if arg is not None:
             return arg
-        else:
-            return None
+        return None
     return _SENTIANL_NONE
 
 
-def col2fieldinfo(c: Column, 
-                  override_optional: bool = False, 
-                  override_default_value: Any = _SENTIANL_NONE): 
+def col2fieldinfo(
+    c: Column,
+    override_optional: bool = False,
+    override_default_value: Any = _SENTIANL_NONE,
+):
     assert isinstance(c, Column)
-    python_type = c.type.python_type 
+    python_type = c.type.python_type
 
     if override_optional:
         if not is_optional(python_type):
-            python_type = cast(type, Optional[python_type])
-    else:
-        if c.nullable:
-            python_type = cast(type, Optional[python_type])
+            python_type = cast("type", Optional[python_type])
+    elif c.nullable:
+        python_type = cast("type", Optional[python_type])
 
     field_kwargs: dict[str, Any] = {}
 
@@ -46,17 +49,20 @@ def col2fieldinfo(c: Column,
 
     field: FieldInfo = Field(**field_kwargs)
 
-    return (python_type, field, )
+    return (python_type, field)
 
-def relationship2fieldinfo(rel: Relationship,
-                           create_model_call: Callable[[SA_MODEL], PY_MODEL],
-                           override_optional: bool = False): 
+
+def relationship2fieldinfo(
+    rel: Relationship,
+    create_model_call: Callable[[SA_MODEL], PY_MODEL],
+    override_optional: bool = False,
+):
     assert isinstance(rel, Relationship)
-    
+
     rel_model = rel.mapper.class_
     model: PY_MODEL = create_model_call(rel_model)
 
-    default_value = [] if rel.uselist else None # type:ignore 
+    default_value = [] if rel.uselist else None
 
     type_ = relationship_python_type(model, rel)
 
@@ -68,12 +74,14 @@ def relationship2fieldinfo(rel: Relationship,
 
 def relationship_python_type(model: PY_MODEL | ForwardRef, rel: Relationship):
     assert isinstance(rel, Relationship)
-    assert isinstance(model, (type, ForwardRef, )), f"Pydantic Model Class expected. {model}"
+    assert isinstance(model, (type, ForwardRef)), (
+        f"Pydantic Model Class expected. {model}"
+    )
     if isinstance(model, type):
         assert issubclass(model, BaseModel), f"Pydantic Model Class expected. {model}"
 
     if rel.uselist:
-        return list[model] # type:ignore
+        return list[model]
     if rel.local_remote_pairs:
         for pair in rel.local_remote_pairs:
             for c in pair:
@@ -83,21 +91,21 @@ def relationship_python_type(model: PY_MODEL | ForwardRef, rel: Relationship):
     return model
 
 
-OverrideOptionalType = Literal[""]
-
-
 class Sa2Pydantic:
-    
-    def __init__(self,
-                sa: SA_MODEL, 
-                name_call: Callable[[SA_MODEL], str],
-                exclude_rel: bool = False,
-                exclude_foreignkeys: bool = False,
-                exclude_fields: list[str] | None = None,
-                exclude_primarykey: bool = False,
-                override_optional: Callable[[Relationship | Column], bool] | bool | None = None,
-                override_default_value: Callable[[Relationship | Column], Any] | Any | None = _SENTIANL_NONE,
-                 ):
+    def __init__(
+        self,
+        sa: SA_MODEL,
+        name_call: Callable[[SA_MODEL], str],
+        exclude_rel: bool = False,
+        exclude_foreignkeys: bool = False,
+        exclude_fields: list[str] | None = None,
+        exclude_primarykey: bool = False,
+        override_optional: Callable[[Relationship | Column], bool] | bool | None = None,
+        override_default_value: Callable[[Relationship | Column], Any]
+        | Any
+        | None = _SENTIANL_NONE,
+        leading_underscore_strategy: LeadingUnderscoreStrategy = "pass",
+    ):
         self.namespace: dict[str, PY_MODEL | ForwardRef] = {}
         self.sa = sa
         self.name_call = name_call
@@ -105,57 +113,78 @@ class Sa2Pydantic:
         self.exclude_foreignkeys = exclude_foreignkeys
         self.exclude_fields = exclude_fields or []
         self.exclude_primarykey = exclude_primarykey
-        self.override_optional= override_optional
+        self.override_optional = override_optional
         self.override_default_value = override_default_value
+        self.leading_underscore_strategy = leading_underscore_strategy
 
     def process(self):
         model = self.sa2pydantic(self.sa)
         assert issubclass(model, BaseModel)
 
-        assert all(issubclass(x,BaseModel) for x in self.namespace.values())
+        assert all(issubclass(x, BaseModel) for x in self.namespace.values())
 
         self.model_rebuild_deep(model)
         return model
 
-    def sa2pydantic(self, sa: SA_MODEL):
+    def sa2pydantic(self, sa: SA_MODEL):  # noqa: C901
         assert issubclass(sa, DeclarativeBase), f"{sa} is no DeclarativeBase"
         model_name = self.name_call(sa)
 
         if sa in SA2PYDANTIC_REGISTRY and model_name in SA2PYDANTIC_REGISTRY[sa]:
-            resolved = SA2PYDANTIC_REGISTRY[sa][model_name] 
+            resolved = SA2PYDANTIC_REGISTRY[sa][model_name]
             self.namespace[model_name] = resolved
             return resolved
-        else:
-            SA2PYDANTIC_REGISTRY[sa][model_name] = ForwardRef(model_name)
+        SA2PYDANTIC_REGISTRY[sa][model_name] = ForwardRef(model_name)
 
         inspection = inspect(sa)
 
+        def rename_field(name: str):
+            if (
+                self.leading_underscore_strategy == "remove_underscore"
+                and name.startswith(
+                    "_",
+                )
+            ):
+                return name[1:]
+            return name
+
         def keep_column(c: Column):
+            if self.leading_underscore_strategy == "skip_field" and c.name.startswith(
+                "_",
+            ):
+                return False
             if c.name in self.exclude_fields:
                 return False
-            if self.exclude_foreignkeys:
-                if len(c.foreign_keys):
-                    return False
-            if self.exclude_primarykey:
-                if c.primary_key:
-                    return False
-            return True
+            if self.exclude_foreignkeys and len(c.foreign_keys):
+                return False
+            return not (self.exclude_primarykey and c.primary_key)
 
         column_fields = {
-            c.name: self.col2fieldinfo(c) 
-            for c in inspection.columns if keep_column(c)
-            }
+            rename_field(c.name): self.col2fieldinfo(c)
+            for c in inspection.columns
+            if keep_column(c)
+        }
 
         if self.exclude_rel:
             relationship_fields = {}
-        else:   
+        else:
+
+            def keep_rel(rel: Relationship):
+                if (
+                    self.leading_underscore_strategy == "skip_field"
+                    and rel.key.startswith("_")
+                ):
+                    return False
+                return rel.key not in self.exclude_fields
+
             relationship_fields = {
-                r.key: self.relationship2fieldinfo(
-                cast(Relationship, r),
-                    create_model_call=lambda rel: self.sa2pydantic(rel)
-                    ) 
-                for r in inspection.relationships if r.key not in self.exclude_fields
-                }
+                rename_field(r.key): self.relationship2fieldinfo(
+                    cast("Relationship", r),
+                    create_model_call=self.sa2pydantic,
+                )
+                for r in inspection.relationships
+                if keep_rel(r)
+            }
 
         model = create_model(model_name, **column_fields, **relationship_fields)
         assert issubclass(model, BaseModel)
@@ -172,17 +201,24 @@ class Sa2Pydantic:
                 override_optional = self.override_optional
         return override_optional
 
-    def relationship2fieldinfo(self, rel: Relationship, create_model_call: Callable[[SA_MODEL], PY_MODEL]): 
+    def relationship2fieldinfo(
+        self,
+        rel: Relationship,
+        create_model_call: Callable[[SA_MODEL], PY_MODEL],
+    ):
 
         override_optional = self.resolve_override_optional(rel)
 
-        return relationship2fieldinfo(rel, create_model_call, override_optional=override_optional)
+        return relationship2fieldinfo(
+            rel,
+            create_model_call,
+            override_optional=override_optional,
+        )
 
     def col2fieldinfo(self, c: Column):
-        
+
         override_optional = self.resolve_override_optional(c)
 
-        
         override_default_value = _SENTIANL_NONE
 
         if self.override_default_value != _SENTIANL_NONE:
@@ -190,12 +226,18 @@ class Sa2Pydantic:
                 override_default_value = self.override_default_value(c)
             else:
                 override_default_value = self.override_default_value
-                
 
-        return col2fieldinfo(c, override_optional=override_optional, override_default_value=override_default_value)
+        return col2fieldinfo(
+            c,
+            override_optional=override_optional,
+            override_default_value=override_default_value,
+        )
 
-
-    def model_rebuild_deep(self, model: type[BaseModel], seen: Set[type[BaseModel]] | None = None):
+    def model_rebuild_deep(
+        self,
+        model: type[BaseModel],
+        seen: set[type[BaseModel]] | None = None,
+    ):
 
         seen = seen or set()
 
@@ -203,9 +245,8 @@ class Sa2Pydantic:
             return
         model.model_rebuild(_types_namespace=self.namespace)
         seen.add(model)
-        for field, info in model.model_fields.items():
+        for info in model.model_fields.values():
             for a in get_args(info.annotation):
                 if not issubclass(a, BaseModel):
                     continue
-                self.model_rebuild_deep(a,  seen) 
-
+                self.model_rebuild_deep(a, seen)

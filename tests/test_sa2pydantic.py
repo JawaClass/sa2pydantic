@@ -1,19 +1,25 @@
-from typing import List, Optional
-from sa2pydantic import sa2pydantic
-from sa2pydantic.type_util import get_optional_inner, is_optional
-from .conf import Pokemon, Trainer
-from pydantic import BaseModel, ValidationError
+from typing import Optional
+
 import pytest
+from pydantic import BaseModel, ValidationError
+
+from sa2pydantic import sa2pydantic
 from sa2pydantic.registry import SA2PYDANTIC_REGISTRY
+from sa2pydantic.type_util import get_optional_inner, is_optional
+
+from .conf import MyUser, Pokemon, Trainer
+
 
 @pytest.fixture(autouse=True)
 def clear_registry():
     SA2PYDANTIC_REGISTRY.clear()
 
 
-
 def test_sa2pydantic():
-    PokemonCreate = sa2pydantic(Pokemon, name_call=lambda sa: f"{sa.__name__.title()}Create")
+    PokemonCreate = sa2pydantic(
+        Pokemon,
+        name_call=lambda sa: f"{sa.__name__.title()}Create",
+    )
     assert issubclass(PokemonCreate, BaseModel)
     assert PokemonCreate.__name__ == "PokemonCreate"
     fields = PokemonCreate.model_fields
@@ -22,13 +28,17 @@ def test_sa2pydantic():
     assert fields["trainer_id"].annotation == int | None
     assert fields["trainer_id"].annotation == Optional[int]
 
-
     assert is_optional(fields["evolution"].annotation)
     assert is_optional(fields["evolution_id"].annotation)
     assert fields["level"].default == 1
 
+
 def test_id_excluded():
-    PokemonCreate = sa2pydantic(Pokemon, name_call=lambda sa: f"{sa.__name__.title()}Create", exclude_fields="id")
+    PokemonCreate = sa2pydantic(
+        Pokemon,
+        name_call=lambda sa: f"{sa.__name__.title()}Create",
+        exclude_fields="id",
+    )
     assert issubclass(PokemonCreate, BaseModel)
     assert PokemonCreate.__name__ == "PokemonCreate"
     fields = PokemonCreate.model_fields
@@ -37,7 +47,11 @@ def test_id_excluded():
 
 
 def test_pk_excluded():
-    PokemonCreate = sa2pydantic(Pokemon, name_call=lambda sa: f"{sa.__name__.title()}Create", exclude_primarykey=True)
+    PokemonCreate = sa2pydantic(
+        Pokemon,
+        name_call=lambda sa: f"{sa.__name__.title()}Create",
+        exclude_primarykey=True,
+    )
     assert issubclass(PokemonCreate, BaseModel)
     assert PokemonCreate.__name__ == "PokemonCreate"
     fields = PokemonCreate.model_fields
@@ -50,7 +64,6 @@ def test_relationship():
     assert PokemonOut.__name__ == "PokemonOut"
     fields = PokemonOut.model_fields
     owner = fields["owner"].annotation
-    print("OWNER", owner)
     assert is_optional(owner)
     TrainerOut = SA2PYDANTIC_REGISTRY[Trainer]["TrainerOut"]
 
@@ -60,7 +73,10 @@ def test_relationship():
 
     assert trainer_fields["name"].annotation is str
     assert trainer_fields["region"].annotation == str | None
-    assert trainer_fields["pokemons"].annotation == list[PokemonOut], f"{trainer_fields['pokemons'].annotation} not {List[PokemonOut]}"
+    assert trainer_fields["pokemons"].annotation == list[PokemonOut], (
+        f"{trainer_fields['pokemons'].annotation} not {list[PokemonOut]}"
+    )
+
 
 def test_relationship_self_referenced():
     PokemonOut = sa2pydantic(Pokemon, name_call=lambda sa: f"{sa.__name__.title()}Out")
@@ -74,7 +90,11 @@ def test_relationship_self_referenced():
 
 
 def test_raise_required_args_missing():
-    PokemonCreate = sa2pydantic(Pokemon, name_call=lambda sa: f"{sa.__name__.title()}Create", exclude_fields="id")
+    PokemonCreate = sa2pydantic(
+        Pokemon,
+        name_call=lambda sa: f"{sa.__name__.title()}Create",
+        exclude_fields="id",
+    )
     assert issubclass(PokemonCreate, BaseModel)
     assert PokemonCreate.__name__ == "PokemonCreate"
     err: None | ValidationError = None
@@ -89,36 +109,58 @@ def test_raise_required_args_missing():
         PokemonCreate(species="Bird")
     except ValidationError as e:
         err = e
-    assert err and err.error_count() == 3 
+    assert err and err.error_count() == 3
 
     err = None
     try:
         PokemonCreate(species="Bird", poke_type="...")
     except ValidationError as e:
         err = e
-    assert err and err.error_count() == 2 
+    assert err and err.error_count() == 2
 
     err = None
     try:
         PokemonCreate(species="Bird", poke_type="...", trainer_id=1, evolution_id=1)
     except ValidationError as e:
         err = e
-    assert err is None 
+    assert err is None
 
 
 def test_relationship_optional_override():
-    PokemonOut = sa2pydantic(Pokemon,
-                             name_call=lambda sa: f"{sa.__name__.title()}Out", 
-                             override_optional=True,
-                             override_default_value=None,
-                             )
+    PokemonOut = sa2pydantic(
+        Pokemon,
+        name_call=lambda sa: f"{sa.__name__.title()}Out",
+        override_optional=True,
+        override_default_value=None,
+    )
     assert issubclass(PokemonOut, BaseModel)
     assert PokemonOut.__name__ == "PokemonOut"
     fields = PokemonOut.model_fields
 
-    for _, info in fields.items():
+    for info in fields.values():
         assert is_optional(info.annotation)
-        assert not info.is_required() 
+        assert not info.is_required()
 
-   # should not raise ValidationError 
+    # should not raise ValidationError
     PokemonOut()
+
+
+def test_underscore_remove():
+    MyUserOut = sa2pydantic(
+        MyUser,
+        name_call=lambda sa: f"{sa.__name__.title()}Out",
+        leading_underscore_strategy="remove_underscore",
+    )
+
+    assert "underscore" in MyUserOut.model_fields
+
+
+def test_underscore_skip():
+    MyUserOut = sa2pydantic(
+        MyUser,
+        name_call=lambda sa: f"{sa.__name__.title()}Out",
+        leading_underscore_strategy="skip_field",
+    )
+
+    assert "underscore" not in MyUserOut.model_fields
+    assert "_underscore" not in MyUserOut.model_fields
