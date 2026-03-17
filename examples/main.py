@@ -23,6 +23,13 @@ TrainerCreate: PY_MODEL = sa2pydantic(Trainer,
 TrainerOut: PY_MODEL = sa2pydantic(Trainer,
                                    name_call=lambda sa:  f"{sa.__name__.title()}Out")
 
+
+PokemonOutOptional: PY_MODEL = sa2pydantic(Pokemon,
+                                   name_call=lambda sa:  f"{sa.__name__.title()}OutOptional", 
+                                   override_optional=True,
+                                   override_default_value=None)
+
+
 def describe_model(model: type[BaseModel]):
     print("Describe", model)
     for f, i  in model.model_fields.items():
@@ -33,3 +40,4 @@ describe_model(PokemonOut)
 describe_model(TrainerCreate)
 describe_model(TrainerOut)
 describe_model(TrainerOut)
+describe_model(PokemonOutOptional)

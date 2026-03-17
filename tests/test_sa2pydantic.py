@@ -1,7 +1,8 @@
-from typing import List, Optional, get_args
+from typing import List, Optional
 from sa2pydantic import sa2pydantic
+from sa2pydantic.type_util import get_optional_inner, is_optional
 from .conf import Pokemon, Trainer
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 import pytest
 from sa2pydantic.registry import SA2PYDANTIC_REGISTRY
 
@@ -10,15 +11,6 @@ def clear_registry():
     SA2PYDANTIC_REGISTRY.clear()
 
 
-def is_optional(type_: type):
-    args = get_args(type_)
-    return type(None) in args
-
-def get_optional_inner(type_: type):
-    assert is_optional(type_)
-    args = [a for a in get_args(type_) if a is not type(None)]
-    assert len(args) == 1
-    return args[0]
 
 def test_sa2pydantic():
     PokemonCreate = sa2pydantic(Pokemon, name_call=lambda sa: f"{sa.__name__.title()}Create")
@@ -79,3 +71,54 @@ def test_relationship_self_referenced():
     assert is_optional(evolution)
     evolution_inner_type = get_optional_inner(evolution)
     assert evolution_inner_type is PokemonOut
+
+
+def test_raise_required_args_missing():
+    PokemonCreate = sa2pydantic(Pokemon, name_call=lambda sa: f"{sa.__name__.title()}Create", exclude_fields="id")
+    assert issubclass(PokemonCreate, BaseModel)
+    assert PokemonCreate.__name__ == "PokemonCreate"
+    err: None | ValidationError = None
+    try:
+        PokemonCreate()
+    except ValidationError as e:
+        err = e
+    assert err and err.error_count() == 4
+
+    err = None
+    try:
+        PokemonCreate(species="Bird")
+    except ValidationError as e:
+        err = e
+    assert err and err.error_count() == 3 
+
+    err = None
+    try:
+        PokemonCreate(species="Bird", poke_type="...")
+    except ValidationError as e:
+        err = e
+    assert err and err.error_count() == 2 
+
+    err = None
+    try:
+        PokemonCreate(species="Bird", poke_type="...", trainer_id=1, evolution_id=1)
+    except ValidationError as e:
+        err = e
+    assert err is None 
+
+
+def test_relationship_optional_override():
+    PokemonOut = sa2pydantic(Pokemon,
+                             name_call=lambda sa: f"{sa.__name__.title()}Out", 
+                             override_optional=True,
+                             override_default_value=None,
+                             )
+    assert issubclass(PokemonOut, BaseModel)
+    assert PokemonOut.__name__ == "PokemonOut"
+    fields = PokemonOut.model_fields
+
+    for _, info in fields.items():
+        assert is_optional(info.annotation)
+        assert not info.is_required() 
+
+   # should not raise ValidationError 
+    PokemonOut()
