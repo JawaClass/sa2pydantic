@@ -1,0 +1,27 @@
+name: Publish
+
+on:
+  release:
+    types:
+      - created
+
+jobs:
+
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: build
+        run: uv build
+
+      - name: Upload package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
